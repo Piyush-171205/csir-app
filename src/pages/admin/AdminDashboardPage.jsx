@@ -1,233 +1,119 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  FaUsers, FaUserTie, FaClipboardList, FaCheckCircle, 
+import {
+  FaUsers, FaUserTie, FaClipboardList, FaCheckCircle,
   FaHourglassHalf, FaExclamationTriangle, FaChartBar,
-  FaBell, FaUserCircle
+  FaBell, FaSpinner,
 } from 'react-icons/fa';
-import { useAdminStats } from '../../hooks/useAdminStats';
-import { monthlyReportData } from '../../data/adminData';
+import { getAdminStats } from '../../services/adminService';
 
 const AdminDashboardPage = ({ currentUser, t, handleLogout }) => {
   const navigate = useNavigate();
-  const stats = useAdminStats();
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
 
-  // Mock notifications for admin
-  const notifications = [
-    { id: 1, title: 'New Complaint', message: 'High priority complaint from Sector 10', time: '5 min ago', read: false },
-    { id: 2, title: 'Officer Added', message: 'New officer joined Road Department', time: '1 hour ago', read: false },
-    { id: 3, title: 'System Update', message: 'Scheduled maintenance tonight at 2 AM', time: '3 hours ago', read: true },
-  ];
+  useEffect(() => {
+    const fetch = async () => {
+      try {
+        const data = await getAdminStats();
+        setStats(data);
+      } catch (err) {
+        setError(err.response?.data?.message || 'Failed to load stats.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetch();
+  }, []);
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  if (loading) return (
+    <div className="admin-dashboard" style={{ textAlign: 'center', padding: 60 }}>
+      <FaSpinner className="spin" style={{ fontSize: 32 }} /><p style={{ marginTop: 12 }}>Loading dashboard…</p>
+    </div>
+  );
 
   return (
     <div className="admin-dashboard">
-      {/* Header */}
       <div className="dashboard-header glass-card">
         <div className="welcome-message">
-          <h2>Welcome, {currentUser?.name || 'Administrator'}!</h2>
-          <p className="welcome-subtitle">Admin Dashboard - System Overview</p>
+          <h2>Welcome, {currentUser?.firstName || 'Administrator'}!</h2>
+          <p className="welcome-subtitle">Admin Dashboard — System Overview</p>
         </div>
-        
         <div className="header-actions">
-          <div className="notifications-wrapper">
-            <button 
-              className="notifications-btn"
-              onClick={() => setShowNotifications(!showNotifications)}
-            >
-              <FaBell />
-              {unreadCount > 0 && (
-                <span className="notification-badge">{unreadCount}</span>
-              )}
-            </button>
-            
-            {showNotifications && (
-              <div className="notifications-dropdown">
-                <div className="notifications-header">
-                  <h4>Notifications</h4>
-                  <button>Mark all read</button>
-                </div>
-                <div className="notifications-list">
-                  {notifications.map(notif => (
-                    <div key={notif.id} className={`notification-item ${!notif.read ? 'unread' : ''}`}>
-                      <div className="notification-content">
-                        <p className="notification-title">{notif.title}</p>
-                        <p className="notification-message">{notif.message}</p>
-                        <span className="notification-time">{notif.time}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="notifications-footer">
-                  <button onClick={() => navigate('/admin/notifications')}>
-                    View all notifications
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-          
-          <button className="logout-btn-dashboard" onClick={handleLogout}>
-            {t.logout}
-          </button>
+          <button className="logout-btn-dashboard" onClick={handleLogout}>{t.logout}</button>
         </div>
       </div>
 
-      {/* Stats Cards */}
+      {error && <div className="error-message glass-card" style={{ padding: 16, marginBottom: 16 }}>{error}</div>}
+
       <div className="stats-grid">
-        <div className="stat-card glass-card" onClick={() => navigate('/admin/citizens')}>
-          <div className="stat-icon">
-            <FaUsers />
+        {[
+          { label: 'Total Citizens',   value: stats?.totalCitizens,       sub: `${stats?.activeCitizens} active · ${stats?.blockedCitizens} blocked`, icon: <FaUsers />,                route: '/admin/citizens' },
+          { label: 'Officers',         value: stats?.totalOfficers,       sub: `${stats?.activeOfficers} active`,                                      icon: <FaUserTie />,              route: '/admin/officers' },
+          { label: 'Total Complaints', value: stats?.totalComplaints,     sub: 'All time',                                                             icon: <FaClipboardList />,        route: '/admin/complaints' },
+          { label: 'Pending',          value: stats?.pendingComplaints,   sub: 'Awaiting action',                                                      icon: <FaHourglassHalf />,        route: '/admin/complaints' },
+          { label: 'In Progress',      value: stats?.inProgressComplaints,sub: 'Being worked on',                                                      icon: <FaExclamationTriangle />,  route: '/admin/complaints' },
+          { label: 'Resolved',         value: stats?.resolvedComplaints,  sub: 'Successfully closed',                                                  icon: <FaCheckCircle />,          route: '/admin/complaints' },
+          { label: 'Urgent',           value: stats?.urgentComplaints,    sub: 'High priority',                                                        icon: <FaExclamationTriangle />,  route: '/admin/complaints', urgent: true },
+        ].map(({ label, value, sub, icon, route, urgent }) => (
+          <div key={label} className={`stat-card glass-card${urgent ? ' urgent' : ''}`} onClick={() => navigate(route)} style={{ cursor: 'pointer' }}>
+            <div className="stat-icon">{icon}</div>
+            <div className="stat-content">
+              <h3>{label}</h3>
+              <p className="stat-value">{value ?? '—'}</p>
+              <p className="stat-subtext">{sub}</p>
+            </div>
           </div>
-          <div className="stat-content">
-            <h3>Total Citizens</h3>
-            <p className="stat-value">{stats.totalCitizens}</p>
-            <p className="stat-subtext">
-              <span className="active">{stats.activeCitizens} active</span>
-              <span className="blocked">{stats.blockedCitizens} blocked</span>
-            </p>
-          </div>
-        </div>
-
-        <div className="stat-card glass-card" onClick={() => navigate('/admin/officers')}>
-          <div className="stat-icon">
-            <FaUserTie />
-          </div>
-          <div className="stat-content">
-            <h3>Government Officers</h3>
-            <p className="stat-value">{stats.totalOfficers}</p>
-            <p className="stat-subtext">
-              <span className="active">{stats.activeOfficers} active</span>
-            </p>
-          </div>
-        </div>
-
-        <div className="stat-card glass-card" onClick={() => navigate('/admin/complaints')}>
-          <div className="stat-icon">
-            <FaClipboardList />
-          </div>
-          <div className="stat-content">
-            <h3>Total Complaints</h3>
-            <p className="stat-value">{stats.totalComplaints}</p>
-            <p className="stat-subtext">All time</p>
-          </div>
-        </div>
-
-        <div className="stat-card glass-card" onClick={() => navigate('/admin/complaints?status=pending')}>
-          <div className="stat-icon">
-            <FaHourglassHalf />
-          </div>
-          <div className="stat-content">
-            <h3>Pending</h3>
-            <p className="stat-value">{stats.pendingComplaints}</p>
-            <p className="stat-subtext">Awaiting action</p>
-          </div>
-        </div>
-
-        <div className="stat-card glass-card" onClick={() => navigate('/admin/complaints?status=in-progress')}>
-          <div className="stat-icon">
-            <FaExclamationTriangle />
-          </div>
-          <div className="stat-content">
-            <h3>In Progress</h3>
-            <p className="stat-value">{stats.inProgressComplaints}</p>
-            <p className="stat-subtext">Being worked on</p>
-          </div>
-        </div>
-
-        <div className="stat-card glass-card" onClick={() => navigate('/admin/complaints?status=resolved')}>
-          <div className="stat-icon">
-            <FaCheckCircle />
-          </div>
-          <div className="stat-content">
-            <h3>Resolved</h3>
-            <p className="stat-value">{stats.resolvedComplaints}</p>
-            <p className="stat-subtext">Successfully closed</p>
-          </div>
-        </div>
-
-        <div className="stat-card glass-card urgent" onClick={() => navigate('/admin/complaints?priority=urgent')}>
-          <div className="stat-icon">
-            <FaExclamationTriangle />
-          </div>
-          <div className="stat-content">
-            <h3>Urgent</h3>
-            <p className="stat-value">{stats.urgentComplaints}</p>
-            <p className="stat-subtext">High priority</p>
-          </div>
-        </div>
+        ))}
       </div>
 
-      {/* Quick Actions */}
       <div className="quick-actions-section">
         <h3>Quick Actions</h3>
         <div className="quick-actions-grid">
-          <button className="quick-action-card glass-card" onClick={() => navigate('/admin/citizens')}>
-            <FaUsers />
-            <span>Manage Citizens</span>
-          </button>
-          <button className="quick-action-card glass-card" onClick={() => navigate('/admin/officers')}>
-            <FaUserTie />
-            <span>Manage Officers</span>
-          </button>
-          <button className="quick-action-card glass-card" onClick={() => navigate('/admin/complaints')}>
-            <FaClipboardList />
-            <span>View Complaints</span>
-          </button>
-          <button className="quick-action-card glass-card" onClick={() => navigate('/admin/categories')}>
-            <FaChartBar />
-            <span>Manage Categories</span>
-          </button>
-          <button className="quick-action-card glass-card" onClick={() => navigate('/admin/reports')}>
-            <FaChartBar />
-            <span>View Reports</span>
-          </button>
-          <button className="quick-action-card glass-card" onClick={() => navigate('/admin/notifications')}>
-            <FaBell />
-            <span>Announcements</span>
-          </button>
+          {[
+            ['/admin/citizens',      <FaUsers />,       'Manage Citizens'],
+            ['/admin/officers',      <FaUserTie />,     'Manage Officers'],
+            ['/admin/complaints',    <FaClipboardList />,'View Complaints'],
+            ['/admin/categories',    <FaChartBar />,    'Manage Categories'],
+            ['/admin/reports',       <FaChartBar />,    'View Reports'],
+            ['/admin/notifications', <FaBell />,        'Announcements'],
+          ].map(([route, icon, label]) => (
+            <button key={route} className="quick-action-card glass-card" onClick={() => navigate(route)}>
+              {icon}<span>{label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Monthly Report Chart - Simple Bar Chart Representation */}
-      <div className="chart-section glass-card">
-        <h3>Monthly Complaint Report</h3>
-        <div className="chart-container">
-          <div className="chart-bars">
-            {monthlyReportData.labels.map((label, index) => (
-              <div key={index} className="chart-bar-group">
-                <div className="bar-labels">
-                  <span>{label}</span>
-                </div>
-                <div className="bars">
-                  <div 
-                    className="bar complaints" 
-                    style={{ height: `${monthlyReportData.complaints[index] * 2}px` }}
-                    title={`Complaints: ${monthlyReportData.complaints[index]}`}
-                  />
-                  <div 
-                    className="bar resolved" 
-                    style={{ height: `${monthlyReportData.resolved[index] * 2}px` }}
-                    title={`Resolved: ${monthlyReportData.resolved[index]}`}
-                  />
-                  <div 
-                    className="bar pending" 
-                    style={{ height: `${monthlyReportData.pending[index] * 2}px` }}
-                    title={`Pending: ${monthlyReportData.pending[index]}`}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="chart-legend">
-            <span className="legend-item complaints">Total Complaints</span>
-            <span className="legend-item resolved">Resolved</span>
-            <span className="legend-item pending">Pending</span>
+      {stats?.monthlyTrend?.length > 0 && (
+        <div className="chart-section glass-card">
+          <h3>Recent Monthly Trend</h3>
+          <div className="chart-container">
+            <div className="chart-bars">
+              {stats.monthlyTrend.map((m, i) => {
+                const monthName = new Date(0, m._id.month - 1).toLocaleString('default', { month: 'short' });
+                return (
+                  <div key={i} className="chart-bar-group">
+                    <div className="bar-labels"><span>{monthName}</span></div>
+                    <div className="bars">
+                      <div className="bar complaints" style={{ height: `${m.total * 2}px` }} title={`Total: ${m.total}`} />
+                      <div className="bar resolved"   style={{ height: `${m.resolved * 2}px` }} title={`Resolved: ${m.resolved}`} />
+                      <div className="bar pending"    style={{ height: `${m.pending * 2}px` }} title={`Pending: ${m.pending}`} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="chart-legend">
+              <span className="legend-item complaints">Total</span>
+              <span className="legend-item resolved">Resolved</span>
+              <span className="legend-item pending">Pending</span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

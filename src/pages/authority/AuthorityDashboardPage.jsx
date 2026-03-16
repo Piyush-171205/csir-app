@@ -2,251 +2,152 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
-import { FaBell, FaClipboardList, FaUserTie, FaBuilding } from 'react-icons/fa';
-import { departmentComplaints, departmentNames } from '../../data/authorityData.js';
-import { useAuthorityNotifications } from '../../hooks/useAuthorityNotifications';
+import { FaBell, FaClipboardList, FaUserTie, FaBuilding, FaSpinner } from 'react-icons/fa';
+import { getDepartmentStats, getDepartmentComplaints, getNotifications, markAllNotificationsRead } from '../../services/authorityService';
 
-const AuthorityDashboardPage = ({ 
-  currentUser, 
-  t, 
-  handleLogout,
-  authorityNotifications,
-  setAuthorityNotifications,
-  setAuthorityUnreadCount,
-  authorityUnreadCount
-}) => {
+const DEPT_NAMES = { road:'Road Department', water:'Water Department', electricity:'Electricity Department', garbage:'Garbage Department', infrastructure:'Infrastructure Department', education:'Education Department' };
+const STATUS_COLORS = { reported:'#6b7280', acknowledged:'#3b82f6', 'in-progress':'#f59e0b', 'almost-resolved':'#9b59b6', resolved:'#10b981', completed:'#10b981' };
+
+const AuthorityDashboardPage = ({ currentUser, t, handleLogout }) => {
   const navigate = useNavigate();
-  const [showNotifications, setShowNotifications] = useState(false);
-  const department = currentUser?.department;
-  
-  const complaints = departmentComplaints[department] || [];
-  
-  const stats = {
-    total: complaints.length,
-    reported: complaints.filter(c => c.status === 'Reported').length,
-    acknowledged: complaints.filter(c => c.status === 'Acknowledged').length,
-    inProgress: complaints.filter(c => c.status === 'In Progress').length,
-    resolved: complaints.filter(c => c.status === 'Resolved').length
+  const [stats, setStats]                   = useState(null);
+  const [recentComplaints, setRecent]       = useState([]);
+  const [notifications, setNotifications]   = useState([]);
+  const [unreadCount, setUnreadCount]       = useState(0);
+  const [showNotifs, setShowNotifs]         = useState(false);
+  const [loading, setLoading]               = useState(true);
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      try {
+        const [s, c, n] = await Promise.all([
+          getDepartmentStats(),
+          getDepartmentComplaints(),
+          getNotifications(),
+        ]);
+        setStats(s);
+        setRecent(c.slice(0, 5));
+        setNotifications(n.notifications);
+        setUnreadCount(n.unreadCount);
+      } catch (err) {
+        console.error(err);
+      } finally { setLoading(false); }
+    };
+    fetchAll();
+  }, []);
+
+  const handleMarkAllRead = async () => {
+    await markAllNotificationsRead();
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setUnreadCount(0);
   };
 
-  const recentComplaints = complaints.slice(0, 5);
+  if (loading) return (
+    <div className="dashboard glass-card" style={{ textAlign:'center', padding:60 }}>
+      <FaSpinner className="spin" style={{ fontSize:32 }}/><p style={{marginTop:12}}>Loading dashboard…</p>
+    </div>
+  );
 
-  const getStatusColor = (status) => {
-    switch(status) {
-      case 'Reported': return '#6b7280';
-      case 'Acknowledged': return '#3b82f6';
-      case 'In Progress': return '#f59e0b';
-      case 'Resolved': return '#10b981';
-      default: return '#6b7280';
-    }
-  };
-
-  const getStatusIcon = (status) => {
-    switch(status) {
-      case 'Reported': return '📋';
-      case 'Acknowledged': return '👁️';
-      case 'In Progress': return '🚧';
-      case 'Resolved': return '✅';
-      default: return '📋';
-    }
-  };
+  const statCards = [
+    { label:'Total Complaints', value:stats?.total||0,       pct:100,                                                                   color:'#000080' },
+    { label:'Reported',         value:stats?.reported||0,     pct:stats?.total?(stats.reported/stats.total)*100:0,                      color:'#6b7280' },
+    { label:'In Progress',      value:stats?.inProgress||0,   pct:stats?.total?(stats.inProgress/stats.total)*100:0,                    color:'#f59e0b' },
+    { label:'Resolved',         value:stats?.resolved||0,     pct:stats?.total?(stats.resolved/stats.total)*100:0,                      color:'#10b981' },
+  ];
 
   return (
     <div className="dashboard glass-card">
-      {/* Header with Notifications */}
       <div className="dashboard-header">
         <div className="welcome-message">
-          <h2>{t.welcome} {currentUser?.name}!</h2>
-          <p className="welcome-subtitle">
-            <FaBuilding /> {departmentNames[department]} - {department}
-          </p>
+          <h2>{t.welcome} {currentUser?.firstName || currentUser?.username}!</h2>
+          <p className="welcome-subtitle"><FaBuilding /> {DEPT_NAMES[currentUser?.department] || currentUser?.department}</p>
         </div>
-        
         <div className="header-actions">
           <div className="notifications-wrapper">
-            <button 
-              className="notifications-btn"
-              onClick={() => setShowNotifications(!showNotifications)}
-            >
+            <button className="notifications-btn" onClick={() => setShowNotifs(!showNotifs)}>
               <FaBell />
-              {authorityUnreadCount > 0 && (
-                <span className="notification-badge">{authorityUnreadCount}</span>
-              )}
+              {unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}
             </button>
-            
-            {showNotifications && (
+            {showNotifs && (
               <div className="notifications-dropdown">
                 <div className="notifications-header">
                   <h4>Notifications</h4>
-                  <button onClick={() => {
-                    const updated = authorityNotifications.map(n => ({ ...n, read: true }));
-                    setAuthorityNotifications(updated);
-                    setAuthorityUnreadCount(0);
-                  }}>Mark all read</button>
+                  <button onClick={handleMarkAllRead}>Mark all read</button>
                 </div>
                 <div className="notifications-list">
-                  {authorityNotifications.slice(0, 5).map(notif => (
-                    <div 
-                      key={notif.id} 
-                      className={`notification-item ${!notif.read ? 'unread' : ''}`}
-                      onClick={() => {
-                        navigate(`/authority/complaint/${notif.complaintId}`);
-                        setShowNotifications(false);
-                      }}
-                    >
-                      <div className="notification-icon">
-                        {notif.type === 'new_complaint' && <span>📋</span>}
-                        {notif.type === 'priority_update' && <span>⚠️</span>}
-                      </div>
+                  {notifications.slice(0, 5).map(n => (
+                    <div key={n._id} className={`notification-item ${!n.read?'unread':''}`}
+                      onClick={() => { navigate(`/authority/complaint/${n.complaintId}`); setShowNotifs(false); }}>
                       <div className="notification-content">
-                        <p className="notification-title">{notif.title}</p>
-                        <p className="notification-message">{notif.message}</p>
-                        <span className="notification-time">
-                          {new Date(notif.timestamp).toLocaleDateString()}
-                        </span>
+                        <p className="notification-title">{n.title}</p>
+                        <p className="notification-message">{n.message}</p>
+                        <span className="notification-time">{new Date(n.createdAt).toLocaleDateString()}</span>
                       </div>
                     </div>
                   ))}
+                  {notifications.length === 0 && <p style={{padding:12,color:'#888'}}>No notifications</p>}
                 </div>
                 <div className="notifications-footer">
-                  <button onClick={() => {
-                    navigate('/authority/notifications');
-                    setShowNotifications(false);
-                  }}>
-                    View all notifications
-                  </button>
+                  <button onClick={() => { navigate('/authority/notifications'); setShowNotifs(false); }}>View all</button>
                 </div>
               </div>
             )}
           </div>
-          
-          <button className="logout-btn-dashboard" onClick={handleLogout}>
-            {t.logout}
-          </button>
+          <button className="logout-btn-dashboard" onClick={handleLogout}>{t.logout}</button>
         </div>
       </div>
 
-      {/* Stats Cards with Circular Progress */}
       <div className="stats-grid">
-        <div className="stat-card glass-card">
-          <div className="stat-circle">
-            <CircularProgressbar 
-              value={100} 
-              text={`${stats.total}`}
-              styles={buildStyles({
-                textSize: '24px',
-                pathColor: '#000080',
-                textColor: '#000080',
-              })}
-            />
+        {statCards.map(({ label, value, pct, color }) => (
+          <div key={label} className="stat-card glass-card">
+            <div className="stat-circle">
+              <CircularProgressbar value={pct} text={`${value}`}
+                styles={buildStyles({ textSize:'24px', pathColor:color, textColor:color })}/>
+            </div>
+            <h3>{label}</h3>
           </div>
-          <h3>Total Complaints</h3>
-        </div>
-        
-        <div className="stat-card glass-card">
-          <div className="stat-circle">
-            <CircularProgressbar 
-              value={stats.total > 0 ? (stats.reported / stats.total) * 100 : 0} 
-              text={`${stats.reported}`}
-              styles={buildStyles({
-                textSize: '24px',
-                pathColor: '#6b7280',
-                textColor: '#6b7280',
-              })}
-            />
-          </div>
-          <h3>Reported</h3>
-        </div>
-        
-        <div className="stat-card glass-card">
-          <div className="stat-circle">
-            <CircularProgressbar 
-              value={stats.total > 0 ? (stats.inProgress / stats.total) * 100 : 0} 
-              text={`${stats.inProgress}`}
-              styles={buildStyles({
-                textSize: '24px',
-                pathColor: '#f59e0b',
-                textColor: '#f59e0b',
-              })}
-            />
-          </div>
-          <h3>In Progress</h3>
-        </div>
-        
-        <div className="stat-card glass-card">
-          <div className="stat-circle">
-            <CircularProgressbar 
-              value={stats.total > 0 ? (stats.resolved / stats.total) * 100 : 0} 
-              text={`${stats.resolved}`}
-              styles={buildStyles({
-                textSize: '24px',
-                pathColor: '#10b981',
-                textColor: '#10b981',
-              })}
-            />
-          </div>
-          <h3>Resolved</h3>
-        </div>
+        ))}
       </div>
 
-      {/* Quick Actions */}
       <div className="quick-actions">
         <h3>Quick Actions</h3>
         <div className="quick-buttons">
-          <button 
-            className="quick-btn glass-card"
-            onClick={() => navigate('/authority/complaints')}
-          >
-            <FaClipboardList className="quick-icon" />
-            View All Complaints
+          <button className="quick-btn glass-card" onClick={() => navigate('/authority/complaints')}>
+            <FaClipboardList className="quick-icon"/> View All Complaints
           </button>
-          <button 
-            className="quick-btn glass-card"
-            onClick={() => navigate('/authority/profile')}
-          >
-            <FaUserTie className="quick-icon" />
-            My Profile
+          <button className="quick-btn glass-card" onClick={() => navigate('/authority/profile')}>
+            <FaUserTie className="quick-icon"/> My Profile
           </button>
         </div>
       </div>
 
-      {/* Recent Complaints */}
       <div className="recent-activity">
         <h3>Recent Complaints</h3>
         <div className="activity-list">
-          {recentComplaints.map(complaint => (
-            <div 
-              key={complaint.id} 
-              className="activity-item"
-              onClick={() => navigate(`/authority/complaint/${complaint.id}`)}
-            >
-              <div className="activity-icon">
-                {getStatusIcon(complaint.status)}
+          {recentComplaints.length === 0
+            ? <p style={{color:'#888',padding:'12px'}}>No complaints assigned yet.</p>
+            : recentComplaints.map(c => (
+              <div key={c._id} className="activity-item" onClick={() => navigate(`/authority/complaint/${c._id}`)}>
+                <div className="activity-icon">
+                  {c.status==='resolved'||c.status==='completed'?'✅':c.status==='in-progress'?'🚧':c.status==='acknowledged'?'👁️':'📋'}
+                </div>
+                <div className="activity-details">
+                  <h4>{c.title}</h4>
+                  <p>
+                    <span className="complaint-id">#{c.complaintId || c._id.slice(-6).toUpperCase()}</span>
+                    <span className="complaint-status" style={{ color: STATUS_COLORS[c.status]||'#888', marginLeft:8 }}>{c.status}</span>
+                  </p>
+                  <p className="complaint-user">
+                    {c.reportedBy ? `${c.reportedBy.firstName} ${c.reportedBy.lastName}` : '—'}
+                  </p>
+                </div>
+                <div className="activity-time">{new Date(c.createdAt).toLocaleDateString()}</div>
               </div>
-              <div className="activity-details">
-                <h4>{complaint.issueLocation}</h4>
-                <p>
-                  <span className="complaint-id">#{complaint.id}</span>
-                  <span 
-                    className="complaint-status"
-                    style={{ color: getStatusColor(complaint.status) }}
-                  >
-                    {complaint.status}
-                  </span>
-                </p>
-                <p className="complaint-user">{complaint.userName}</p>
-              </div>
-              <div className="activity-time">
-                {complaint.issueDate}
-              </div>
-            </div>
-          ))}
+            ))
+          }
         </div>
-        {stats.total > 5 && (
-          <button 
-            className="view-all-btn"
-            onClick={() => navigate('/authority/complaints')}
-          >
+        {(stats?.total || 0) > 5 && (
+          <button className="view-all-btn" onClick={() => navigate('/authority/complaints')}>
             View All ({stats.total})
           </button>
         )}
@@ -254,5 +155,4 @@ const AuthorityDashboardPage = ({
     </div>
   );
 };
-
 export default AuthorityDashboardPage;

@@ -1,11 +1,25 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FaMapMarkerAlt, FaSearch, FaCamera } from 'react-icons/fa';
+import { FaMapMarkerAlt, FaSearch, FaCamera, FaSpinner } from 'react-icons/fa';
+import {
+  uploadComplaintImages,
+  createComplaint,
+} from '../services/complaintService';
 
-const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
+const ReportIssuePage = ({ currentUser, t }) => {
   const navigate = useNavigate();
+
+  // ── UI state ────────────────────────────────────────────────────────────────
   const [step, setStep] = useState(1);
   const [selectedDepartment, setSelectedDepartment] = useState('');
+  const [showSummary, setShowSummary] = useState(false);
+  const [submittedIssue, setSubmittedIssue] = useState(null);
+
+  // Loading / error
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+
+  // ── Form state ───────────────────────────────────────────────────────────────
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -14,25 +28,27 @@ const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
     issueLocation: '',
     issueLocationCoords: null,
     issueLocationAddress: '',
-    photo: null,
-    date: new Date().toISOString().split('T')[0]
+    photos: [],           // File objects chosen by the user
+    date: new Date().toISOString().split('T')[0],
   });
-  const [showSummary, setShowSummary] = useState(false);
-  const [submittedIssue, setSubmittedIssue] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // ── Map state ────────────────────────────────────────────────────────────────
   const [mapSearchQuery, setMapSearchQuery] = useState('');
   const [showMap, setShowMap] = useState(false);
   const [mapLocation, setMapLocation] = useState({ lat: 19.076, lng: 72.8777 });
+  const [mapSearching, setMapSearching] = useState(false);
 
+  // ── Departments ───────────────────────────────────────────────────────────────
   const departments = [
-    { id: 'road', name: t.departments.road, icon: '🛣️', color: '#4a90e2' },
-    { id: 'water', name: t.departments.water, icon: '💧', color: '#50c878' },
-    { id: 'electricity', name: t.departments.electricity, icon: '⚡', color: '#f39c12' },
-    { id: 'garbage', name: t.departments.garbage, icon: '🗑️', color: '#e67e22' },
+    { id: 'road',           name: t.departments.road,           icon: '🛣️', color: '#4a90e2' },
+    { id: 'water',          name: t.departments.water,          icon: '💧', color: '#50c878' },
+    { id: 'electricity',    name: t.departments.electricity,    icon: '⚡', color: '#f39c12' },
+    { id: 'garbage',        name: t.departments.garbage,        icon: '🗑️', color: '#e67e22' },
     { id: 'infrastructure', name: t.departments.infrastructure, icon: '🏗️', color: '#9b59b6' },
-    { id: 'education', name: t.departments.education, icon: '📚', color: '#3498db' }
+    { id: 'education',      name: t.departments.education,      icon: '📚', color: '#3498db' },
   ];
 
+  // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleDepartmentSelect = (deptId) => {
     setSelectedDepartment(deptId);
     setStep(2);
@@ -40,123 +56,142 @@ const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  // Allow up to 5 photos
   const handleFileChange = (e) => {
-    setFormData(prev => ({ ...prev, photo: e.target.files[0] }));
+    const selected = Array.from(e.target.files).slice(0, 5);
+    setFormData((prev) => ({ ...prev, photos: selected }));
   };
 
+  // Reverse-geocode the user's current GPS position
   const getLiveLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const coords = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          };
-          setMapLocation(coords);
-          setFormData(prev => ({ 
-            ...prev, 
-            yourLocation: `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`,
-            yourLocationCoords: coords
-          }));
-          
-          fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}`)
-            .then(res => res.json())
-            .then(data => {
-              if (data.display_name) {
-                setFormData(prev => ({ ...prev, yourLocation: data.display_name }));
-              }
-            })
-            .catch(err => console.log('Reverse geocoding failed'));
-        },
-        (error) => {
-          alert('Unable to get your location. Please enable location services.');
-        }
-      );
-    } else {
+    if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser.');
+      return;
     }
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const coords = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        setMapLocation(coords);
+        setFormData((prev) => ({
+          ...prev,
+          yourLocation: `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`,
+          yourLocationCoords: coords,
+        }));
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}`
+          );
+          const data = await res.json();
+          if (data.display_name) {
+            setFormData((prev) => ({ ...prev, yourLocation: data.display_name }));
+          }
+        } catch {
+          // silently fall back to raw coords already set above
+        }
+      },
+      () => alert('Unable to get your location. Please enable location services.')
+    );
   };
 
-  const findOnMap = () => {
+  // Forward-geocode a typed address and show the map pin
+  const findOnMap = async () => {
     if (!mapSearchQuery.trim()) {
       alert('Please enter a location to search');
       return;
     }
-
-    setShowMap(true);
-    
-    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(mapSearchQuery)}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.length > 0) {
-          const location = data[0];
-          const coords = {
-            lat: parseFloat(location.lat),
-            lng: parseFloat(location.lon)
-          };
-          setMapLocation(coords);
-          setFormData(prev => ({
-            ...prev,
-            issueLocation: mapSearchQuery,
-            issueLocationCoords: coords,
-            issueLocationAddress: location.display_name
-          }));
-        } else {
-          alert('Location not found. Please try a different search term.');
-        }
-      })
-      .catch(err => {
-        alert('Error searching for location. Please try again.');
-      });
+    setMapSearching(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(mapSearchQuery)}`
+      );
+      const data = await res.json();
+      if (data && data.length > 0) {
+        const loc = data[0];
+        const coords = { lat: parseFloat(loc.lat), lng: parseFloat(loc.lon) };
+        setMapLocation(coords);
+        setShowMap(true);
+        setFormData((prev) => ({
+          ...prev,
+          issueLocation: mapSearchQuery,
+          issueLocationCoords: coords,
+          issueLocationAddress: loc.display_name,
+        }));
+      } else {
+        alert('Location not found. Please try a different search term.');
+      }
+    } catch {
+      alert('Error searching for location. Please try again.');
+    } finally {
+      setMapSearching(false);
+    }
   };
 
-  const handleSubmit = (e) => {
+  // ── Submit ────────────────────────────────────────────────────────────────────
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    setSubmitError('');
     setIsSubmitting(true);
 
-    const newIssue = {
-      _id: Math.random().toString(36).substr(2, 6).toUpperCase(),
-      title: formData.title,
-      description: formData.description,
-      department: selectedDepartment,
-      location: {
-        area: formData.issueLocation.split(',')[0] || 'Unknown',
-        city: formData.issueLocation.includes('Mumbai') ? 'Mumbai' : 'Navi Mumbai',
-        address: formData.issueLocationAddress || formData.issueLocation || 'Not specified'
-      },
-      status: 'reported',
-      progress: 0,
-      priority: 'medium',
-      reportedBy: currentUser?.username || 'unknown',
-      geoLocation: formData.issueLocationCoords ? {
-        type: 'Point',
-        coordinates: [formData.issueLocationCoords.lng, formData.issueLocationCoords.lat]
-      } : formData.yourLocationCoords ? {
-        type: 'Point',
-        coordinates: [formData.yourLocationCoords.lng, formData.yourLocationCoords.lat]
-      } : {
-        type: 'Point',
-        coordinates: [72.8777, 19.076]
-      },
-      images: formData.photo ? [URL.createObjectURL(formData.photo)] : [],
-      statusHistory: [
-        { status: 'reported', date: new Date().toISOString(), note: 'Complaint registered' }
-      ],
-      expectedResolutionDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      __v: 0
-    };
+    try {
+      // ── Step A: upload photos first (if any) ───────────────────────────────
+      let imageUrls = [];
+      if (formData.photos.length > 0) {
+        const uploadResult = await uploadComplaintImages(formData.photos);
+        // uploadResult.files = [{ filename, path, url }]
+        imageUrls = uploadResult.files.map((f) => f.url);
+      }
 
-    complaintsDB.push(newIssue);
-    setSubmittedIssue(newIssue);
-    setShowSummary(true);
-    setIsSubmitting(false);
+      // ── Step B: build the payload the backend expects ──────────────────────
+      // Validator requires: title, description, department, location.address
+      const payload = {
+        title: formData.title,
+        description: formData.description,
+        department: selectedDepartment,
+        location: {
+          address: formData.issueLocationAddress || formData.issueLocation || 'Not specified',
+          area:    formData.issueLocation.split(',')[0]?.trim() || 'Unknown',
+          city:    formData.issueLocationAddress?.includes('Mumbai') ? 'Mumbai' : 'Navi Mumbai',
+        },
+        geoLocation: formData.issueLocationCoords
+          ? {
+              type: 'Point',
+              coordinates: [formData.issueLocationCoords.lng, formData.issueLocationCoords.lat],
+            }
+          : formData.yourLocationCoords
+          ? {
+              type: 'Point',
+              coordinates: [formData.yourLocationCoords.lng, formData.yourLocationCoords.lat],
+            }
+          : {
+              type: 'Point',
+              coordinates: [72.8777, 19.076], // Mumbai fallback
+            },
+        images: imageUrls,
+      };
+
+      // ── Step C: create the complaint ───────────────────────────────────────
+      const complaint = await createComplaint(payload);
+
+      setSubmittedIssue(complaint);
+      setShowSummary(true);
+    } catch (error) {
+      const message =
+        error.response?.data?.message ||
+        error.response?.data?.errors?.[0]?.msg ||
+        'Failed to submit complaint. Please try again.';
+      setSubmitError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
+  // ── Reset and go home ─────────────────────────────────────────────────────────
   const handleBackToDashboard = () => {
     setShowSummary(false);
     setStep(1);
@@ -169,12 +204,14 @@ const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
       issueLocation: '',
       issueLocationCoords: null,
       issueLocationAddress: '',
-      photo: null,
-      date: new Date().toISOString().split('T')[0]
+      photos: [],
+      date: new Date().toISOString().split('T')[0],
     });
+    setSubmitError('');
     navigate('/dashboard');
   };
 
+  // ── Success summary screen ────────────────────────────────────────────────────
   if (showSummary && submittedIssue) {
     return (
       <div className="report-issue-container">
@@ -182,53 +219,33 @@ const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
           <h2>{t.issueReportedSuccess} ✅</h2>
           <div className="summary-card">
             <h3>{t.issueSummary}</h3>
-            
             <div className="summary-details-enhanced">
-              <div className="summary-row">
-                <span className="summary-label">{t.issueTitle}:</span>
-                <span className="summary-value">{submittedIssue.title}</span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.description}:</span>
-                <span className="summary-value">{submittedIssue.description}</span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.department}:</span>
-                <span className="summary-value">{departments.find(d => d.id === submittedIssue.department)?.name || submittedIssue.department}</span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.location}:</span>
-                <span className="summary-value">{submittedIssue.location.address}</span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.area}:</span>
-                <span className="summary-value">{submittedIssue.location.area}</span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.city}:</span>
-                <span className="summary-value">{submittedIssue.location.city}</span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.coordinates}:</span>
-                <span className="summary-value">
-                  {submittedIssue.geoLocation.coordinates[1].toFixed(4)}, {submittedIssue.geoLocation.coordinates[0].toFixed(4)}
-                </span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.status}:</span>
-                <span className="summary-value status-badge pending">{submittedIssue.status}</span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.expectedResolution}:</span>
-                <span className="summary-value">{new Date(submittedIssue.expectedResolutionDate).toLocaleDateString()}</span>
-              </div>
-              <div className="summary-row">
-                <span className="summary-label">{t.reportedOn}:</span>
-                <span className="summary-value">{new Date(submittedIssue.createdAt).toLocaleString()}</span>
-              </div>
+              {[
+                [t.issueTitle,          submittedIssue.title],
+                [t.description,         submittedIssue.description],
+                [t.department,          departments.find((d) => d.id === submittedIssue.department)?.name || submittedIssue.department],
+                [t.location,            submittedIssue.location?.address],
+                [t.area,                submittedIssue.location?.area],
+                [t.city,                submittedIssue.location?.city],
+                [t.coordinates,         submittedIssue.geoLocation?.coordinates
+                                          ? `${submittedIssue.geoLocation.coordinates[1].toFixed(4)}, ${submittedIssue.geoLocation.coordinates[0].toFixed(4)}`
+                                          : '—'],
+                [t.status,              submittedIssue.status],
+                [t.expectedResolution,  submittedIssue.expectedResolutionDate
+                                          ? new Date(submittedIssue.expectedResolutionDate).toLocaleDateString()
+                                          : '—'],
+                [t.reportedOn,          new Date(submittedIssue.createdAt).toLocaleString()],
+              ].map(([label, value]) => (
+                <div className="summary-row" key={label}>
+                  <span className="summary-label">{label}:</span>
+                  <span className="summary-value">{value}</span>
+                </div>
+              ))}
               <div className="summary-row highlight">
                 <span className="summary-label">Issue ID:</span>
-                <span className="summary-value issue-id-highlight">{submittedIssue._id}</span>
+                <span className="summary-value issue-id-highlight">
+                  {submittedIssue.complaintId || submittedIssue._id}
+                </span>
               </div>
             </div>
           </div>
@@ -240,6 +257,7 @@ const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
     );
   }
 
+  // ── Main form ─────────────────────────────────────────────────────────────────
   return (
     <div className="report-issue-container">
       <div className="report-issue-header">
@@ -247,13 +265,14 @@ const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
         <button className="back-btn" onClick={() => navigate('/dashboard')}>← Back</button>
       </div>
 
+      {/* ── Step 1: pick department ── */}
       {step === 1 ? (
         <div className="department-selection glass-card">
           <h3>{t.selectDepartment}</h3>
           <div className="departments-grid-report">
-            {departments.map(dept => (
-              <div 
-                key={dept.id} 
+            {departments.map((dept) => (
+              <div
+                key={dept.id}
                 className="department-card-report glass-card"
                 style={{ borderColor: dept.color }}
                 onClick={() => handleDepartmentSelect(dept.id)}
@@ -265,72 +284,90 @@ const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
           </div>
         </div>
       ) : (
+
+        /* ── Step 2: fill in complaint details ── */
         <form className="issue-form glass-card" onSubmit={handleSubmit}>
+
+          {submitError && (
+            <div className="error-message" style={{ marginBottom: '16px' }}>
+              {submitError}
+            </div>
+          )}
+
+          {/* Title */}
           <div className="form-group">
             <label>{t.issueTitle} *</label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               name="title"
               value={formData.title}
               onChange={handleInputChange}
               required
               placeholder="Enter issue title"
+              disabled={isSubmitting}
             />
           </div>
 
+          {/* Department (read-only) */}
           <div className="form-group">
             <label>{t.department} *</label>
-            <input 
-              type="text" 
-              value={departments.find(d => d.id === selectedDepartment)?.name || selectedDepartment}
+            <input
+              type="text"
+              value={departments.find((d) => d.id === selectedDepartment)?.name || selectedDepartment}
               readOnly
               className="readonly-input"
             />
           </div>
 
+          {/* Description */}
           <div className="form-group">
             <label>{t.issueDescription} *</label>
-            <textarea 
+            <textarea
               name="description"
               value={formData.description}
               onChange={handleInputChange}
               required
               rows="4"
               placeholder="Describe the issue in detail"
+              disabled={isSubmitting}
             />
           </div>
 
+          {/* Your location (GPS) */}
           <div className="form-group">
             <label>{t.yourLocation}</label>
             <div className="location-input-group">
-              <input 
-                type="text" 
+              <input
+                type="text"
                 name="yourLocation"
                 value={formData.yourLocation}
                 onChange={handleInputChange}
                 placeholder="Your current location"
                 readOnly
               />
-              <button type="button" className="location-btn" onClick={getLiveLocation}>
+              <button type="button" className="location-btn" onClick={getLiveLocation} disabled={isSubmitting}>
                 <FaMapMarkerAlt /> {t.getLiveLocation}
               </button>
             </div>
           </div>
 
+          {/* Issue location (map search) */}
           <div className="form-group">
             <label>{t.issueLocation} *</label>
             <div className="map-search-group">
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={mapSearchQuery}
                 onChange={(e) => setMapSearchQuery(e.target.value)}
                 placeholder={t.searchLocation}
+                disabled={isSubmitting}
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), findOnMap())}
               />
-              <button type="button" className="map-btn" onClick={findOnMap}>
-                <FaSearch /> {t.findOnMap}
+              <button type="button" className="map-btn" onClick={findOnMap} disabled={isSubmitting || mapSearching}>
+                {mapSearching ? <FaSpinner className="spin" /> : <FaSearch />} {t.findOnMap}
               </button>
             </div>
-            
+
             {showMap && (
               <div className="map-preview">
                 <div className="map-placeholder">
@@ -342,62 +379,93 @@ const ReportIssuePage = ({ currentUser, t, complaintsDB }) => {
                       width="100%"
                       height="250"
                       frameBorder="0"
-                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${mapLocation.lng-0.01},${mapLocation.lat-0.01},${mapLocation.lng+0.01},${mapLocation.lat+0.01}&layer=mapnik&marker=${mapLocation.lat},${mapLocation.lng}`}
+                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${mapLocation.lng - 0.01},${mapLocation.lat - 0.01},${mapLocation.lng + 0.01},${mapLocation.lat + 0.01}&layer=mapnik&marker=${mapLocation.lat},${mapLocation.lng}`}
                       style={{ border: '1px solid #ddd', borderRadius: '5px' }}
-                    ></iframe>
+                    />
                   </div>
                 </div>
               </div>
             )}
-            
-            <input 
-              type="text" 
+
+            {/* Editable confirmed location label */}
+            <input
+              type="text"
               name="issueLocation"
               value={formData.issueLocation}
               onChange={handleInputChange}
               required
               placeholder="Selected location will appear here"
               className="mt-2"
+              disabled={isSubmitting}
             />
             {formData.issueLocationCoords && (
               <small className="coords-display">
-                <FaMapMarkerAlt /> {formData.issueLocationCoords.lat.toFixed(4)}, {formData.issueLocationCoords.lng.toFixed(4)}
+                <FaMapMarkerAlt />{' '}
+                {formData.issueLocationCoords.lat.toFixed(4)}, {formData.issueLocationCoords.lng.toFixed(4)}
               </small>
             )}
           </div>
 
+          {/* Photo upload (up to 5) */}
           <div className="form-group">
             <label>{t.uploadPhoto}</label>
             <div className="file-input-wrapper">
-              <input 
-                type="file" 
+              <input
+                type="file"
                 accept="image/*"
+                multiple
                 onChange={handleFileChange}
                 id="photo-upload"
+                disabled={isSubmitting}
               />
               <label htmlFor="photo-upload" className="file-input-label">
-                <FaCamera /> {formData.photo ? formData.photo.name : t.uploadPhoto}
+                <FaCamera />{' '}
+                {formData.photos.length > 0
+                  ? `${formData.photos.length} photo${formData.photos.length > 1 ? 's' : ''} selected`
+                  : t.uploadPhoto}
               </label>
             </div>
+            {/* Thumbnail previews */}
+            {formData.photos.length > 0 && (
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+                {formData.photos.map((file, i) => (
+                  <img
+                    key={i}
+                    src={URL.createObjectURL(file)}
+                    alt={`preview-${i}`}
+                    style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 4, border: '1px solid #ddd' }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
+          {/* Date (read-only) */}
           <div className="form-group">
             <label>{t.dateOfComplaint}</label>
-            <input 
-              type="date" 
+            <input
+              type="date"
               name="date"
               value={formData.date}
-              onChange={handleInputChange}
               readOnly
             />
           </div>
 
           <div className="form-actions">
-            <button type="button" className="secondary-btn" onClick={() => setStep(1)}>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => setStep(1)}
+              disabled={isSubmitting}
+            >
               Back to Departments
             </button>
             <button type="submit" className="submit-btn" disabled={isSubmitting}>
-              {isSubmitting ? t.submitting : t.submit}
+              {isSubmitting ? (
+                <><FaSpinner className="spin" /> {t.submitting}…</>
+              ) : (
+                t.submit
+              )}
             </button>
           </div>
         </form>

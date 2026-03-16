@@ -1,272 +1,180 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  FaChartBar, FaChartPie, FaChartLine, FaDownload,
-  FaCalendarAlt, FaFilePdf, FaFileExcel, FaPrint
-} from 'react-icons/fa';
-import { monthlyReportData, complaintCategories } from '../../data/adminData';
+import { FaFilePdf, FaFileExcel, FaPrint, FaDownload, FaSpinner } from 'react-icons/fa';
+import { getReports } from '../../services/adminService';
+
+const DEPT_COLORS = { road:'#4a90e2', water:'#50c878', electricity:'#f39c12', garbage:'#e67e22', infrastructure:'#9b59b6', education:'#3498db' };
+const PRIORITY_COLORS = { urgent:'#dc3545', high:'#fd7e14', medium:'#ffc107', low:'#28a745' };
 
 const AdminReportsPage = ({ t }) => {
   const navigate = useNavigate();
-  const [selectedYear, setSelectedYear] = useState('2026');
-  const [selectedMonth, setSelectedMonth] = useState('all');
-  const [reportType, setReportType] = useState('monthly');
+  const [selectedYear, setSelectedYear] = useState(String(new Date().getFullYear()));
+  const [reportType, setReportType]     = useState('monthly');
+  const [reports, setReports]           = useState(null);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState('');
 
-  // Mock data for different report types
-  const departmentWiseData = {
-    road: 45,
-    water: 32,
-    electricity: 28,
-    garbage: 38,
-    infrastructure: 25,
-    education: 18
-  };
+  useEffect(() => {
+    (async () => {
+      setLoading(true); setError('');
+      try { setReports(await getReports(selectedYear)); }
+      catch (err) { setError(err.response?.data?.message || 'Failed to load reports.'); }
+      finally { setLoading(false); }
+    })();
+  }, [selectedYear]);
 
-  const priorityWiseData = {
-    urgent: 15,
-    high: 28,
-    medium: 42,
-    low: 25
-  };
-
-  const statusWiseData = {
-    pending: 35,
-    'in-progress': 42,
-    resolved: 68
-  };
-
-  const resolutionTimeData = {
-    road: '3.5 days',
-    water: '2.8 days',
-    electricity: '4.2 days',
-    garbage: '1.5 days',
-    infrastructure: '5.1 days',
-    education: '6.3 days'
-  };
+  const maxBar = (arr, key) => Math.max(...arr.map(i => i[key] || 0), 1);
 
   return (
     <div className="admin-page-container">
       <div className="page-header">
         <h2>Reports & Analytics</h2>
-        <div className="header-actions">
-          <button className="back-btn" onClick={() => navigate('/admin/dashboard')}>
-            ← Back to Dashboard
-          </button>
-        </div>
+        <button className="back-btn" onClick={() => navigate('/admin/dashboard')}>← Back</button>
       </div>
 
-      {/* Report Controls */}
       <div className="report-controls glass-card">
-        <div className="control-group">
-          <label>Report Type:</label>
-          <select value={reportType} onChange={(e) => setReportType(e.target.value)}>
-            <option value="monthly">Monthly Report</option>
-            <option value="department">Department-wise</option>
-            <option value="priority">Priority Analysis</option>
-            <option value="resolution">Resolution Time</option>
+        <div className="control-group"><label>Report Type:</label>
+          <select value={reportType} onChange={e=>setReportType(e.target.value)}>
+            <option value="monthly">Monthly</option>
+            <option value="department">By Department</option>
+            <option value="priority">By Priority</option>
+            <option value="status">By Status</option>
           </select>
         </div>
-
-        <div className="control-group">
-          <label>Year:</label>
-          <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)}>
-            <option value="2026">2026</option>
-            <option value="2025">2025</option>
-            <option value="2024">2024</option>
+        <div className="control-group"><label>Year:</label>
+          <select value={selectedYear} onChange={e=>setSelectedYear(e.target.value)}>
+            {[2026,2025,2024].map(y=><option key={y} value={y}>{y}</option>)}
           </select>
         </div>
-
-        <div className="control-group">
-          <label>Month:</label>
-          <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}>
-            <option value="all">All Months</option>
-            <option value="01">January</option>
-            <option value="02">February</option>
-            <option value="03">March</option>
-            <option value="04">April</option>
-            <option value="05">May</option>
-            <option value="06">June</option>
-            <option value="07">July</option>
-            <option value="08">August</option>
-            <option value="09">September</option>
-            <option value="10">October</option>
-            <option value="11">November</option>
-            <option value="12">December</option>
-          </select>
-        </div>
-
         <div className="export-buttons">
-          <button className="export-btn"><FaFilePdf /> PDF</button>
-          <button className="export-btn"><FaFileExcel /> Excel</button>
-          <button className="export-btn"><FaPrint /> Print</button>
-          <button className="export-btn"><FaDownload /> Download</button>
+          {[['PDF',<FaFilePdf/>],['Excel',<FaFileExcel/>],['Print',<FaPrint/>],['Download',<FaDownload/>]].map(([l,icon])=>(
+            <button key={l} className="export-btn" onClick={()=>alert(`${l} export coming soon`)}>{icon} {l}</button>
+          ))}
         </div>
       </div>
 
-      {/* Report Content */}
-      <div className="report-content glass-card">
-        {reportType === 'monthly' && (
-          <>
-            <h3>Monthly Complaint Report - {selectedYear}</h3>
-            
-            {/* Summary Cards */}
-            <div className="stats-grid-small">
-              <div className="stat-card mini glass-card">
-                <span className="stat-label">Total Complaints</span>
-                <span className="stat-value">568</span>
-              </div>
-              <div className="stat-card mini glass-card">
-                <span className="stat-label">Resolved</span>
-                <span className="stat-value">412</span>
-              </div>
-              <div className="stat-card mini glass-card">
-                <span className="stat-label">Pending</span>
-                <span className="stat-value">156</span>
-              </div>
-              <div className="stat-card mini glass-card">
-                <span className="stat-label">Avg. Resolution</span>
-                <span className="stat-value">3.8 days</span>
-              </div>
-            </div>
+      {error && <div className="error-message glass-card" style={{padding:16,marginBottom:16}}>{error}</div>}
 
-            {/* Chart */}
-            <div className="chart-section">
-              <h4>Monthly Trends</h4>
-              <div className="chart-container">
-                <div className="chart-bars large">
-                  {monthlyReportData.labels.map((label, index) => (
-                    <div key={index} className="chart-bar-group">
-                      <div className="bar-labels">
-                        <span>{label}</span>
-                      </div>
-                      <div className="bars">
-                        <div 
-                          className="bar complaints" 
-                          style={{ height: `${monthlyReportData.complaints[index] * 3}px` }}
-                        >
-                          <span className="bar-value">{monthlyReportData.complaints[index]}</span>
+      {loading ? (
+        <div style={{textAlign:'center',padding:60}}><FaSpinner className="spin" style={{fontSize:32}}/></div>
+      ) : reports && (
+        <div className="report-content glass-card">
+
+          {/* ── Summary cards (always shown) ── */}
+          <div className="stats-grid-small" style={{marginBottom:24}}>
+            {[
+              ['Total Complaints', reports.summary.totalThisYear],
+              ['Resolved',         reports.summary.resolvedThisYear],
+              ['Pending',          reports.summary.pendingThisYear],
+              ['Avg. Resolution',  `${reports.summary.avgResolutionDays} days`],
+            ].map(([l,v])=>(
+              <div key={l} className="stat-card mini glass-card"><span className="stat-label">{l}</span><span className="stat-value">{v}</span></div>
+            ))}
+          </div>
+
+          {/* ── Monthly ── */}
+          {reportType === 'monthly' && (
+            <>
+              <h3>Monthly Trend — {selectedYear}</h3>
+              <div className="chart-section">
+                <div className="chart-container">
+                  <div className="chart-bars large">
+                    {reports.monthly.map((m,i) => (
+                      <div key={i} className="chart-bar-group">
+                        <div className="bar-labels"><span>{m.label}</span></div>
+                        <div className="bars">
+                          <div className="bar complaints" style={{height:`${(m.total/maxBar(reports.monthly,'total'))*120}px`}} title={`Total: ${m.total}`}><span className="bar-value">{m.total}</span></div>
+                          <div className="bar resolved"   style={{height:`${(m.resolved/maxBar(reports.monthly,'total'))*120}px`}} title={`Resolved: ${m.resolved}`}><span className="bar-value">{m.resolved}</span></div>
                         </div>
-                        <div 
-                          className="bar resolved" 
-                          style={{ height: `${monthlyReportData.resolved[index] * 3}px` }}
-                        >
-                          <span className="bar-value">{monthlyReportData.resolved[index]}</span>
-                        </div>
                       </div>
+                    ))}
+                  </div>
+                  <div className="chart-legend">
+                    <span className="legend-item complaints">Total</span>
+                    <span className="legend-item resolved">Resolved</span>
+                  </div>
+                </div>
+              </div>
+              <div className="data-table-container" style={{marginTop:16}}>
+                <table className="data-table">
+                  <thead><tr><th>Month</th><th>Total</th><th>Resolved</th><th>Pending</th><th>Rate</th></tr></thead>
+                  <tbody>
+                    {reports.monthly.map((m,i) => {
+                      const rate = m.total > 0 ? Math.round((m.resolved/m.total)*100) : 0;
+                      return (
+                        <tr key={i}>
+                          <td><strong>{m.label}</strong></td><td>{m.total}</td><td>{m.resolved}</td><td>{m.pending}</td>
+                          <td>
+                            <div className="progress-bar-container">
+                              <div className="progress-bar" style={{width:`${rate}%`}}/>
+                              <span className="progress-text">{rate}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {/* ── By Department ── */}
+          {reportType === 'department' && (
+            <>
+              <h3>Department-wise Analysis</h3>
+              <div className="department-stats">
+                {reports.byDepartment.map(d => (
+                  <div key={d.department} className="department-stat-item">
+                    <span className="dept-name">{d.department?.charAt(0).toUpperCase()+d.department?.slice(1)}</span>
+                    <div className="progress-bar-container">
+                      <div className="progress-bar" style={{width:`${(d.count/Math.max(...reports.byDepartment.map(x=>x.count),1))*100}%`, backgroundColor: DEPT_COLORS[d.department]||'#4a90e2'}}/>
                     </div>
-                  ))}
-                </div>
+                    <span className="dept-count">{d.count}</span>
+                  </div>
+                ))}
               </div>
-            </div>
+            </>
+          )}
 
-            {/* Data Table */}
-            <div className="data-table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Month</th>
-                    <th>Total Complaints</th>
-                    <th>Resolved</th>
-                    <th>Pending</th>
-                    <th>Resolution Rate</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthlyReportData.labels.map((label, index) => {
-                    const total = monthlyReportData.complaints[index];
-                    const resolved = monthlyReportData.resolved[index];
-                    const rate = Math.round((resolved / total) * 100);
-                    return (
-                      <tr key={index}>
-                        <td><strong>{label}</strong></td>
-                        <td>{total}</td>
-                        <td>{resolved}</td>
-                        <td>{monthlyReportData.pending[index]}</td>
-                        <td>
-                          <div className="progress-bar-container">
-                            <div className="progress-bar" style={{ width: `${rate}%` }}></div>
-                            <span className="progress-text">{rate}%</span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-
-        {reportType === 'department' && (
-          <>
-            <h3>Department-wise Complaint Analysis</h3>
-            
-            <div className="department-stats">
-              {Object.entries(departmentWiseData).map(([dept, count]) => (
-                <div key={dept} className="department-stat-item">
-                  <span className="dept-name">{dept.charAt(0).toUpperCase() + dept.slice(1)}</span>
-                  <div className="progress-bar-container">
-                    <div className="progress-bar" style={{ width: `${(count / 50) * 100}%` }}></div>
+          {/* ── By Priority ── */}
+          {reportType === 'priority' && (
+            <>
+              <h3>Priority-wise Analysis</h3>
+              <div className="priority-chart">
+                {reports.byPriority.map(d => (
+                  <div key={d.priority} className="priority-item">
+                    <span className={`priority-label ${d.priority}`}>{d.priority}</span>
+                    <div className="progress-bar-container">
+                      <div className="progress-bar" style={{width:`${(d.count/Math.max(...reports.byPriority.map(x=>x.count),1))*100}%`, backgroundColor: PRIORITY_COLORS[d.priority]||'#4a90e2'}}/>
+                    </div>
+                    <span className="priority-count">{d.count}</span>
                   </div>
-                  <span className="dept-count">{count}</span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </>
+          )}
 
-            <div className="data-table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Department</th>
-                    <th>Total Complaints</th>
-                    <th>Percentage</th>
-                    <th>Avg Resolution Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(departmentWiseData).map(([dept, count]) => (
-                    <tr key={dept}>
-                      <td>{dept.charAt(0).toUpperCase() + dept.slice(1)}</td>
-                      <td>{count}</td>
-                      <td>{Math.round((count / 186) * 100)}%</td>
-                      <td>{resolutionTimeData[dept]}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-
-        {reportType === 'priority' && (
-          <>
-            <h3>Priority-wise Complaint Analysis</h3>
-            
-            <div className="priority-chart">
-              {Object.entries(priorityWiseData).map(([priority, count]) => (
-                <div key={priority} className="priority-item">
-                  <span className={`priority-label ${priority}`}>{priority}</span>
-                  <div className="progress-bar-container">
-                    <div 
-                      className="progress-bar" 
-                      style={{ 
-                        width: `${(count / 45) * 100}%`,
-                        backgroundColor: 
-                          priority === 'urgent' ? '#dc3545' :
-                          priority === 'high' ? '#fd7e14' :
-                          priority === 'medium' ? '#ffc107' : '#28a745'
-                      }}
-                    ></div>
+          {/* ── By Status ── */}
+          {reportType === 'status' && (
+            <>
+              <h3>Status-wise Breakdown</h3>
+              <div className="department-stats">
+                {reports.byStatus.map(d => (
+                  <div key={d.status} className="department-stat-item">
+                    <span className="dept-name">{d.status}</span>
+                    <div className="progress-bar-container">
+                      <div className="progress-bar" style={{width:`${(d.count/Math.max(...reports.byStatus.map(x=>x.count),1))*100}%`}}/>
+                    </div>
+                    <span className="dept-count">{d.count}</span>
                   </div>
-                  <span className="priority-count">{count}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };
-
 export default AdminReportsPage;

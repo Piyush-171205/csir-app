@@ -1,254 +1,166 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  FaSearch, FaEdit, FaTrash, FaBan, FaCheckCircle,
-  FaUserCheck, FaUserTimes, FaEye, FaPlus
-} from 'react-icons/fa';
-import { citizensData } from '../../data/adminData';
+import { FaSearch, FaEdit, FaTrash, FaBan, FaCheckCircle, FaEye, FaSpinner } from 'react-icons/fa';
+import { getCitizens, updateCitizenStatus, deleteCitizen } from '../../services/adminService';
 
 const AdminCitizensPage = ({ t }) => {
   const navigate = useNavigate();
-  const [citizens, setCitizens] = useState(citizensData);
+  const [citizens, setCitizens]     = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [pageError, setPageError]   = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter]         = useState('all');
   const [selectedCitizen, setSelectedCitizen] = useState(null);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showEditModal, setShowEditModal]       = useState(false);
+  const [showDeleteModal, setShowDeleteModal]   = useState(false);
+  const [actionError, setActionError]           = useState('');
+  const [submitting, setSubmitting]             = useState(false);
 
-  // Filter citizens based on search and status filter
-  const filteredCitizens = citizens.filter(citizen => {
-    const matchesSearch = 
-      citizen.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      citizen.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      citizen.mobile.includes(searchTerm) ||
-      citizen.id.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    if (filter === 'all') return matchesSearch;
-    if (filter === 'active') return matchesSearch && citizen.status === 'active';
-    if (filter === 'blocked') return matchesSearch && citizen.status === 'blocked';
-    if (filter === 'inactive') return matchesSearch && citizen.status === 'inactive';
-    
-    return matchesSearch;
+  useEffect(() => {
+    (async () => {
+      try { setCitizens(await getCitizens()); }
+      catch (err) { setPageError(err.response?.data?.message || 'Failed to load citizens.'); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const filtered = citizens.filter(c => {
+    const name = `${c.firstName} ${c.lastName}`.toLowerCase();
+    const match = name.includes(searchTerm.toLowerCase()) ||
+      c.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.mobile.includes(searchTerm);
+    if (filter === 'active')   return match && c.status === 'active';
+    if (filter === 'blocked')  return match && c.status === 'blocked';
+    if (filter === 'inactive') return match && c.status === 'inactive';
+    return match;
   });
 
-  const handleEdit = (citizen) => {
-    setSelectedCitizen({ ...citizen });
-    setShowEditModal(true);
-  };
-
-  const handleDelete = (citizen) => {
-    setSelectedCitizen(citizen);
-    setShowDeleteModal(true);
-  };
-
-  const handleBlock = (citizenId) => {
-    setCitizens(citizens.map(c => 
-      c.id === citizenId ? { ...c, status: c.status === 'blocked' ? 'active' : 'blocked' } : c
-    ));
-  };
-
-  const handleSaveEdit = () => {
-    setCitizens(citizens.map(c => 
-      c.id === selectedCitizen.id ? selectedCitizen : c
-    ));
-    setShowEditModal(false);
-    setSelectedCitizen(null);
-  };
-
-  const handleConfirmDelete = () => {
-    setCitizens(citizens.filter(c => c.id !== selectedCitizen.id));
-    setShowDeleteModal(false);
-    setSelectedCitizen(null);
-  };
-
-  const getStatusBadge = (status) => {
-    switch(status) {
-      case 'active':
-        return <span className="status-badge active"><FaCheckCircle /> Active</span>;
-      case 'blocked':
-        return <span className="status-badge blocked"><FaBan /> Blocked</span>;
-      case 'inactive':
-        return <span className="status-badge inactive">Inactive</span>;
-      default:
-        return <span className="status-badge">{status}</span>;
+  const handleToggleBlock = async (citizen) => {
+    const newStatus = citizen.status === 'blocked' ? 'active' : 'blocked';
+    try {
+      const updated = await updateCitizenStatus(citizen._id, newStatus);
+      setCitizens(prev => prev.map(c => c._id === updated._id ? updated : c));
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update status.');
     }
   };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true); setActionError('');
+    try {
+      const updated = await updateCitizenStatus(selectedCitizen._id, selectedCitizen.status);
+      setCitizens(prev => prev.map(c => c._id === updated._id ? { ...c, status: updated.status } : c));
+      setShowEditModal(false); setSelectedCitizen(null);
+    } catch (err) {
+      setActionError(err.response?.data?.message || 'Failed to save.');
+    } finally { setSubmitting(false); }
+  };
+
+  const handleConfirmDelete = async () => {
+    setSubmitting(true); setActionError('');
+    try {
+      await deleteCitizen(selectedCitizen._id);
+      setCitizens(prev => prev.filter(c => c._id !== selectedCitizen._id));
+      setShowDeleteModal(false); setSelectedCitizen(null);
+    } catch (err) {
+      setActionError(err.response?.data?.message || 'Failed to delete.');
+    } finally { setSubmitting(false); }
+  };
+
+  const getStatusBadge = (status) => ({
+    active:   <span className="status-badge active"><FaCheckCircle /> Active</span>,
+    blocked:  <span className="status-badge blocked"><FaBan /> Blocked</span>,
+    inactive: <span className="status-badge inactive">Inactive</span>,
+  }[status] || <span className="status-badge">{status}</span>);
+
+  if (loading) return <div className="admin-page-container" style={{ textAlign:'center', padding:60 }}><FaSpinner className="spin" style={{fontSize:32}}/></div>;
 
   return (
     <div className="admin-page-container">
       <div className="page-header">
         <h2>Manage Citizens</h2>
-        <button className="back-btn" onClick={() => navigate('/admin/dashboard')}>
-          ← Back to Dashboard
-        </button>
+        <button className="back-btn" onClick={() => navigate('/admin/dashboard')}>← Back</button>
       </div>
 
-      {/* Stats Summary */}
+      {pageError && <div className="error-message glass-card" style={{padding:16,marginBottom:16}}>{pageError}</div>}
+
       <div className="stats-summary glass-card">
-        <div className="stat-item">
-          <span className="stat-label">Total Citizens:</span>
-          <span className="stat-value">{citizens.length}</span>
-        </div>
-        <div className="stat-item">
-          <span className="stat-label">Active:</span>
-          <span className="stat-value active">{citizens.filter(c => c.status === 'active').length}</span>
-        </div>
-        <div className="stat-item">
-          <span className="stat-label">Blocked:</span>
-          <span className="stat-value blocked">{citizens.filter(c => c.status === 'blocked').length}</span>
-        </div>
-        <div className="stat-item">
-          <span className="stat-label">Inactive:</span>
-          <span className="stat-value inactive">{citizens.filter(c => c.status === 'inactive').length}</span>
-        </div>
+        {[['Total', citizens.length, ''], ['Active', citizens.filter(c=>c.status==='active').length, 'active'], ['Blocked', citizens.filter(c=>c.status==='blocked').length, 'blocked'], ['Inactive', citizens.filter(c=>c.status==='inactive').length, 'inactive']].map(([label, val, cls]) => (
+          <div key={label} className="stat-item"><span className="stat-label">{label}:</span><span className={`stat-value ${cls}`}>{val}</span></div>
+        ))}
       </div>
 
-      {/* Search and Filters */}
       <div className="search-filter-bar glass-card">
-        <div className="search-box">
-          <FaSearch className="search-icon" />
-          <input
-            type="text"
-            placeholder="Search by name, email, mobile or ID..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+        <div className="search-box"><FaSearch className="search-icon"/>
+          <input type="text" placeholder="Search by name, email or mobile…" value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}/>
         </div>
         <div className="filter-box">
-          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-            <option value="all">All Citizens</option>
-            <option value="active">Active Only</option>
-            <option value="blocked">Blocked Only</option>
-            <option value="inactive">Inactive Only</option>
+          <select value={filter} onChange={e=>setFilter(e.target.value)}>
+            <option value="all">All Citizens</option><option value="active">Active</option>
+            <option value="blocked">Blocked</option><option value="inactive">Inactive</option>
           </select>
         </div>
       </div>
 
-      {/* Citizens Table */}
       <div className="data-table-container glass-card">
         <table className="data-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Mobile</th>
-              <th>Address</th>
-              <th>Registered On</th>
-              <th>Status</th>
-              <th>Complaints</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Mobile</th><th>City</th><th>Registered</th><th>Complaints</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {filteredCitizens.length === 0 ? (
-              <tr>
-                <td colSpan="9" className="no-data">No citizens found</td>
-              </tr>
-            ) : (
-              filteredCitizens.map(citizen => (
-                <tr key={citizen.id}>
-                  <td className="id-cell">{citizen.id}</td>
-                  <td className="name-cell">{citizen.name}</td>
-                  <td>{citizen.email}</td>
-                  <td>{citizen.mobile}</td>
-                  <td className="address-cell">{citizen.address}</td>
-                  <td>{citizen.registeredOn}</td>
-                  <td>{getStatusBadge(citizen.status)}</td>
-                  <td className="complaints-count">{citizen.complaints}</td>
+            {filtered.length === 0 ? <tr><td colSpan="8" className="no-data">No citizens found</td></tr> :
+              filtered.map(c => (
+                <tr key={c._id}>
+                  <td className="name-cell">{c.firstName} {c.lastName}</td>
+                  <td>{c.email}</td><td>{c.mobile}</td>
+                  <td>{c.city}</td>
+                  <td>{new Date(c.createdAt).toLocaleDateString()}</td>
+                  <td className="complaints-count">{c.totalComplaints || 0}</td>
+                  <td>{getStatusBadge(c.status)}</td>
                   <td className="actions-cell">
-                    <button className="action-btn view" title="View Details">
-                      <FaEye />
+                    <button className="action-btn edit" title="Edit" onClick={() => { setSelectedCitizen({...c}); setActionError(''); setShowEditModal(true); }}><FaEdit /></button>
+                    <button className={`action-btn ${c.status==='blocked'?'unblock':'block'}`} title={c.status==='blocked'?'Unblock':'Block'} onClick={() => handleToggleBlock(c)}>
+                      {c.status==='blocked' ? <FaCheckCircle /> : <FaBan />}
                     </button>
-                    <button className="action-btn edit" onClick={() => handleEdit(citizen)} title="Edit">
-                      <FaEdit />
-                    </button>
-                    <button 
-                      className={`action-btn ${citizen.status === 'blocked' ? 'unblock' : 'block'}`}
-                      onClick={() => handleBlock(citizen.id)}
-                      title={citizen.status === 'blocked' ? 'Unblock' : 'Block'}
-                    >
-                      {citizen.status === 'blocked' ? <FaCheckCircle /> : <FaBan />}
-                    </button>
-                    <button className="action-btn delete" onClick={() => handleDelete(citizen)} title="Delete">
-                      <FaTrash />
-                    </button>
+                    <button className="action-btn delete" title="Delete" onClick={() => { setSelectedCitizen(c); setActionError(''); setShowDeleteModal(true); }}><FaTrash /></button>
                   </td>
                 </tr>
               ))
-            )}
+            }
           </tbody>
         </table>
       </div>
 
-      {/* Edit Modal */}
       {showEditModal && selectedCitizen && (
         <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h3>Edit Citizen</h3>
-            <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }}>
-              <div className="form-group">
-                <label>Name</label>
-                <input
-                  type="text"
-                  value={selectedCitizen.name}
-                  onChange={(e) => setSelectedCitizen({...selectedCitizen, name: e.target.value})}
-                />
-              </div>
-              <div className="form-group">
-                <label>Email</label>
-                <input
-                  type="email"
-                  value={selectedCitizen.email}
-                  onChange={(e) => setSelectedCitizen({...selectedCitizen, email: e.target.value})}
-                />
-              </div>
-              <div className="form-group">
-                <label>Mobile</label>
-                <input
-                  type="tel"
-                  value={selectedCitizen.mobile}
-                  onChange={(e) => setSelectedCitizen({...selectedCitizen, mobile: e.target.value})}
-                />
-              </div>
-              <div className="form-group">
-                <label>Address</label>
-                <input
-                  type="text"
-                  value={selectedCitizen.address}
-                  onChange={(e) => setSelectedCitizen({...selectedCitizen, address: e.target.value})}
-                />
-              </div>
-              <div className="form-group">
-                <label>Status</label>
-                <select
-                  value={selectedCitizen.status}
-                  onChange={(e) => setSelectedCitizen({...selectedCitizen, status: e.target.value})}
-                >
-                  <option value="active">Active</option>
-                  <option value="blocked">Blocked</option>
-                  <option value="inactive">Inactive</option>
+          <div className="modal-content" onClick={e=>e.stopPropagation()}>
+            <h3>Edit Citizen Status</h3>
+            {actionError && <div className="error-message">{actionError}</div>}
+            <form onSubmit={handleSaveEdit}>
+              <div className="form-group"><label>Name</label><input type="text" value={`${selectedCitizen.firstName} ${selectedCitizen.lastName}`} readOnly className="readonly-input"/></div>
+              <div className="form-group"><label>Status</label>
+                <select value={selectedCitizen.status} onChange={e=>setSelectedCitizen({...selectedCitizen,status:e.target.value})} disabled={submitting}>
+                  <option value="active">Active</option><option value="blocked">Blocked</option><option value="inactive">Inactive</option>
                 </select>
               </div>
               <div className="modal-actions">
-                <button type="submit" className="submit-btn">Save Changes</button>
-                <button type="button" className="cancel-btn" onClick={() => setShowEditModal(false)}>Cancel</button>
+                <button type="submit" className="submit-btn" disabled={submitting}>{submitting?<FaSpinner className="spin"/>:'Save'}</button>
+                <button type="button" className="cancel-btn" onClick={()=>setShowEditModal(false)} disabled={submitting}>Cancel</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
       {showDeleteModal && selectedCitizen && (
         <div className="modal-overlay" onClick={() => setShowDeleteModal(false)}>
-          <div className="modal-content delete-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-content delete-modal" onClick={e=>e.stopPropagation()}>
             <h3>Confirm Delete</h3>
-            <p>Are you sure you want to delete citizen <strong>{selectedCitizen.name}</strong>?</p>
-            <p className="warning">This action cannot be undone!</p>
+            <p>Delete citizen <strong>{selectedCitizen.firstName} {selectedCitizen.lastName}</strong>?</p>
+            <p className="warning">This cannot be undone!</p>
+            {actionError && <div className="error-message">{actionError}</div>}
             <div className="modal-actions">
-              <button className="delete-btn" onClick={handleConfirmDelete}>Delete</button>
-              <button className="cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
+              <button className="delete-btn" onClick={handleConfirmDelete} disabled={submitting}>{submitting?<FaSpinner className="spin"/>:'Delete'}</button>
+              <button className="cancel-btn" onClick={()=>setShowDeleteModal(false)} disabled={submitting}>Cancel</button>
             </div>
           </div>
         </div>
@@ -256,5 +168,4 @@ const AdminCitizensPage = ({ t }) => {
     </div>
   );
 };
-
 export default AdminCitizensPage;

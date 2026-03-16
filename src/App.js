@@ -47,10 +47,13 @@ import AdminNotificationsPage from './pages/admin/AdminNotificationsPage';
 import AdminProfilePage from './pages/admin/AdminProfilePage';
 import AdminChangePasswordPage from './pages/admin/AdminChangePasswordPage';
 
-// Mock Data
-import { usersDB, complaintsDB, appComplaintsDB, appFeedbackDB } from './data/mockData';
+// Still-needed mock data (complaints, feedback — not yet connected to backend)
+import { complaintsDB, appComplaintsDB, appFeedbackDB } from './data/mockData';
 import { securityQuestions, appComplaintTypes, severityLevels, ratingLabels } from './data/constants';
 import { content } from './data/translations';
+
+// Auth service
+import { getProfile, logoutUser } from './services/authService.js';
 
 const App = () => {
   const [language, setLanguage] = useState('english');
@@ -59,23 +62,53 @@ const App = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [authorityNotifications, setAuthorityNotifications] = useState([]);
   const [authorityUnreadCount, setAuthorityUnreadCount] = useState(0);
-  
+
+  // ── Splash screen ──────────────────────────────────────────────────────────
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowSplash(false);
-    }, 2500);
+    const timer = setTimeout(() => setShowSplash(false), 2500);
     return () => clearTimeout(timer);
   }, []);
 
+  // ── Session restore on page refresh ───────────────────────────────────────
+  // If a JWT token exists in localStorage, fetch the profile from the backend
+  // to validate it and restore the user session without requiring re-login.
+  useEffect(() => {
+    const restoreSession = async () => {
+      const token = localStorage.getItem('csir_token');
+      if (!token) return;
+
+      try {
+        const user = await getProfile();
+        setCurrentUser(user);
+        setIsLoggedIn(true);
+      } catch {
+        // Token is invalid or expired — clear storage silently
+        localStorage.removeItem('csir_token');
+        localStorage.removeItem('csir_user');
+      }
+    };
+
+    restoreSession();
+  }, []);
+
+  // ── Logout ─────────────────────────────────────────────────────────────────
   const handleLogout = () => {
+    logoutUser(); // clears localStorage
     setIsLoggedIn(false);
     setCurrentUser(null);
-    // Clear authority notifications on logout
     setAuthorityNotifications([]);
     setAuthorityUnreadCount(0);
   };
 
   const t = content[language];
+
+  // ── Redirect helper (avoids repeating the ternary everywhere) ──────────────
+  const dashboardPath = (user) => {
+    if (!user) return '/';
+    if (user.userType === 'citizen') return '/dashboard';
+    if (user.userType === 'authority') return '/authority/dashboard';
+    return '/admin/dashboard';
+  };
 
   if (showSplash) {
     return (
@@ -96,330 +129,180 @@ const App = () => {
           <Header isLoggedIn={isLoggedIn} currentUser={currentUser} t={t} />
 
           <Routes>
-            {/* Public Routes */}
+            {/* ── Public Routes ── */}
             <Route path="/" element={
-              !isLoggedIn ? (
-                <HomePage t={t} />
-              ) : (
-                <Navigate to={
-                  currentUser?.userType === 'citizen' ? '/dashboard' : 
-                  currentUser?.userType === 'authority' ? '/authority/dashboard' : 
-                  '/admin/dashboard'
-                } />
-              )
+              !isLoggedIn
+                ? <HomePage t={t} />
+                : <Navigate to={dashboardPath(currentUser)} />
             } />
 
             <Route path="/login" element={
-              !isLoggedIn ? (
-                <LoginPage 
-                  t={t} 
-                  usersDB={usersDB} 
-                  setIsLoggedIn={setIsLoggedIn} 
-                  setCurrentUser={setCurrentUser} 
-                />
-              ) : (
-                <Navigate to={
-                  currentUser?.userType === 'citizen' ? '/dashboard' : 
-                  currentUser?.userType === 'authority' ? '/authority/dashboard' : 
-                  '/admin/dashboard'
-                } />
-              )
+              !isLoggedIn
+                ? <LoginPage t={t} setIsLoggedIn={setIsLoggedIn} setCurrentUser={setCurrentUser} />
+                : <Navigate to={dashboardPath(currentUser)} />
             } />
 
             <Route path="/register" element={
-              !isLoggedIn ? (
-                <RegisterPage 
-                  t={t} 
-                  usersDB={usersDB} 
-                  securityQuestions={securityQuestions}
-                />
-              ) : (
-                <Navigate to={
-                  currentUser?.userType === 'citizen' ? '/dashboard' : 
-                  currentUser?.userType === 'authority' ? '/authority/dashboard' : 
-                  '/admin/dashboard'
-                } />
-              )
+              !isLoggedIn
+                ? <RegisterPage t={t} securityQuestions={securityQuestions} />
+                : <Navigate to={dashboardPath(currentUser)} />
             } />
 
             <Route path="/forgot-password" element={
-              !isLoggedIn ? (
-                <ForgotPasswordPage t={t} />
-              ) : (
-                <Navigate to={
-                  currentUser?.userType === 'citizen' ? '/dashboard' : 
-                  currentUser?.userType === 'authority' ? '/authority/dashboard' : 
-                  '/admin/dashboard'
-                } />
-              )
+              !isLoggedIn
+                ? <ForgotPasswordPage t={t} />
+                : <Navigate to={dashboardPath(currentUser)} />
             } />
 
-            {/* Public Info Pages */}
+            {/* ── Public Info Pages ── */}
             <Route path="/app-feedback" element={
-              <AppFeedbackPage 
-                t={t} 
-                appFeedbackDB={appFeedbackDB}
-                ratingLabels={ratingLabels}
-              />
+              <AppFeedbackPage t={t} appFeedbackDB={appFeedbackDB} ratingLabels={ratingLabels} />
             } />
-
             <Route path="/app-complaint" element={
-              <AppComplaintPage 
-                t={t} 
+              <AppComplaintPage
+                t={t}
                 appComplaintsDB={appComplaintsDB}
                 appComplaintTypes={appComplaintTypes}
                 severityLevels={severityLevels}
                 currentUser={currentUser}
               />
             } />
-
-            <Route path="/contact" element={<ContactPage t={t} />} />
-            <Route path="/emergency" element={<EmergencyPage t={t} />} />
-            <Route path="/help" element={<HelpPage t={t} />} />
-            <Route path="/privacy" element={<PrivacyPage t={t} />} />
+            <Route path="/contact"    element={<ContactPage t={t} />} />
+            <Route path="/emergency"  element={<EmergencyPage t={t} />} />
+            <Route path="/help"       element={<HelpPage t={t} />} />
+            <Route path="/privacy"    element={<PrivacyPage t={t} />} />
             <Route path="/disclaimer" element={<DisclaimerPage t={t} />} />
-            <Route path="/terms" element={<TermsPage t={t} />} />
+            <Route path="/terms"      element={<TermsPage t={t} />} />
 
-            {/* Protected Citizen Routes */}
+            {/* ── Protected Citizen Routes ── */}
             <Route path="/dashboard" element={
-              isLoggedIn && currentUser?.userType === 'citizen' ? (
-                <DashboardPage 
-                  currentUser={currentUser} 
-                  t={t} 
-                  handleLogout={handleLogout}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'citizen'
+                ? <DashboardPage currentUser={currentUser} t={t} handleLogout={handleLogout} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/report-issue" element={
-              isLoggedIn && currentUser?.userType === 'citizen' ? (
-                <ReportIssuePage 
-                  currentUser={currentUser} 
-                  t={t} 
-                  complaintsDB={complaintsDB}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'citizen'
+                ? <ReportIssuePage currentUser={currentUser} t={t}  />
+                : <Navigate to="/" />
             } />
-
             <Route path="/my-issues" element={
-              isLoggedIn && currentUser?.userType === 'citizen' ? (
-                <MyIssuesPage 
-                  currentUser={currentUser} 
-                  t={t} 
-                  complaintsDB={complaintsDB}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'citizen'
+                ? <MyIssuesPage currentUser={currentUser} t={t} complaintsDB={complaintsDB} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/track-issue/:id" element={
-              isLoggedIn && currentUser?.userType === 'citizen' ? (
-                <TrackIssuePage 
-                  t={t} 
-                  complaintsDB={complaintsDB}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'citizen'
+                ? <TrackIssuePage t={t} complaintsDB={complaintsDB} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/profile" element={
-              isLoggedIn && currentUser?.userType === 'citizen' ? (
-                <ProfilePage 
-                  currentUser={currentUser} 
-                  t={t} 
-                  usersDB={usersDB}
-                  handleLogout={handleLogout}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'citizen'
+                ? <ProfilePage currentUser={currentUser} t={t} handleLogout={handleLogout} />
+                : <Navigate to="/" />
             } />
 
-            {/* ========== AUTHORITY ROUTES ========== */}
+            {/* ── Authority Routes ── */}
             <Route path="/authority/dashboard" element={
-              isLoggedIn && currentUser?.userType === 'authority' ? (
-                <AuthorityDashboardPage
-                  currentUser={currentUser}
-                  t={t}
-                  handleLogout={handleLogout}
-                  complaintsDB={complaintsDB}
-                  authorityNotifications={authorityNotifications}
-                  setAuthorityNotifications={setAuthorityNotifications}
-                  setAuthorityUnreadCount={setAuthorityUnreadCount}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'authority'
+                ? <AuthorityDashboardPage
+                    currentUser={currentUser} t={t} handleLogout={handleLogout}
+                    complaintsDB={complaintsDB}
+                    authorityNotifications={authorityNotifications}
+                    setAuthorityNotifications={setAuthorityNotifications}
+                    setAuthorityUnreadCount={setAuthorityUnreadCount}
+                  />
+                : <Navigate to="/" />
             } />
-
             <Route path="/authority/complaints" element={
-              isLoggedIn && currentUser?.userType === 'authority' ? (
-                <AuthorityComplaintsPage
-                  currentUser={currentUser}
-                  t={t}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'authority'
+                ? <AuthorityComplaintsPage currentUser={currentUser} t={t} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/authority/complaint/:id" element={
-              isLoggedIn && currentUser?.userType === 'authority' ? (
-                <AuthorityComplaintDetailPage
-                  currentUser={currentUser}
-                  t={t}
-                  complaintsDB={complaintsDB}
-                  setAuthorityNotifications={setAuthorityNotifications}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'authority'
+                ? <AuthorityComplaintDetailPage
+                    currentUser={currentUser} t={t}
+                    complaintsDB={complaintsDB}
+                    setAuthorityNotifications={setAuthorityNotifications}
+                  />
+                : <Navigate to="/" />
             } />
-
             <Route path="/authority/notifications" element={
-              isLoggedIn && currentUser?.userType === 'authority' ? (
-                <AuthorityNotificationsPage
-                  currentUser={currentUser}
-                  t={t}
-                  authorityNotifications={authorityNotifications}
-                  setAuthorityNotifications={setAuthorityNotifications}
-                  setAuthorityUnreadCount={setAuthorityUnreadCount}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'authority'
+                ? <AuthorityNotificationsPage
+                    currentUser={currentUser} t={t}
+                    authorityNotifications={authorityNotifications}
+                    setAuthorityNotifications={setAuthorityNotifications}
+                    setAuthorityUnreadCount={setAuthorityUnreadCount}
+                  />
+                : <Navigate to="/" />
             } />
-
             <Route path="/authority/profile" element={
-              isLoggedIn && currentUser?.userType === 'authority' ? (
-                <AuthorityProfilePage
-                  currentUser={currentUser}
-                  t={t}
-                  usersDB={usersDB}
-                  handleLogout={handleLogout}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'authority'
+                ? <AuthorityProfilePage currentUser={currentUser} t={t} handleLogout={handleLogout} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/authority/change-password" element={
-              isLoggedIn && currentUser?.userType === 'authority' ? (
-                <AuthorityChangePasswordPage
-                  currentUser={currentUser}
-                  t={t}
-                  usersDB={usersDB}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'authority'
+                ? <AuthorityChangePasswordPage currentUser={currentUser} t={t} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/department-feedback/:department" element={
-              <DepartmentFeedbackPage
-                t={t}
-              />
+              <DepartmentFeedbackPage t={t} />
             } />
 
-            {/* ========== ADMIN ROUTES ========== */}
+            {/* ── Admin Routes ── */}
             <Route path="/admin/dashboard" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminDashboardPage
-                  currentUser={currentUser}
-                  t={t}
-                  handleLogout={handleLogout}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminDashboardPage currentUser={currentUser} t={t} handleLogout={handleLogout} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/admin/citizens" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminCitizensPage t={t} />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminCitizensPage t={t} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/admin/officers" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminOfficersPage t={t} />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminOfficersPage t={t} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/admin/complaints" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminComplaintsPage t={t} />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminComplaintsPage t={t} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/admin/categories" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminCategoriesPage t={t} />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminCategoriesPage t={t} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/admin/reports" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminReportsPage t={t} />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminReportsPage t={t} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/admin/notifications" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminNotificationsPage t={t} />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminNotificationsPage t={t} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/admin/profile" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminProfilePage
-                  currentUser={currentUser}
-                  t={t}
-                  usersDB={usersDB}
-                  handleLogout={handleLogout}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminProfilePage currentUser={currentUser} t={t} handleLogout={handleLogout} />
+                : <Navigate to="/" />
             } />
-
             <Route path="/admin/change-password" element={
-              isLoggedIn && currentUser?.userType === 'admin' ? (
-                <AdminChangePasswordPage
-                  currentUser={currentUser}
-                  t={t}
-                  usersDB={usersDB}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
+              isLoggedIn && currentUser?.userType === 'admin'
+                ? <AdminChangePasswordPage currentUser={currentUser} t={t} />
+                : <Navigate to="/" />
             } />
 
-            {/* Catch all route - redirect to home */}
+            {/* Catch-all */}
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
 
-          {!isLoggedIn && window.location.pathname === '/' && (
-            <Footer t={t} />
-          )}
+          {!isLoggedIn && window.location.pathname === '/' && <Footer t={t} />}
         </div>
       </Router>
     </LanguageProvider>
